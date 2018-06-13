@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import MutableMapping
 from itertools import chain, zip_longest, repeat
 
 from typing import Any, Hashable, Union, NamedTuple, List, Tuple, Optional, Iterable, Iterator, TypeVar
@@ -13,21 +13,14 @@ class RobinValue(NamedTuple):
     value: Any
 
 
-class RobinFlag(str):
-    def __bool__(self) -> bool:
-        return False
-
-
-EMPTY = RobinFlag('Empty')
-DELETED = RobinFlag('Deleted')
-
-
-Bucket = Union[RobinFlag, RobinValue]
+Bucket = Optional[RobinValue]
+EMPTY = None
 
 
 class BucketList(List[Bucket]):
     def __init__(self, itable: Iterable, n_full: int = 0) -> None:
         self.n_full = n_full
+        self.deleted = set()
         super().__init__(itable)
 
     def __setitem__(self, idx: int, value: Any) -> None:
@@ -36,6 +29,7 @@ class BucketList(List[Bucket]):
 
         delta = (-1 if old_value else 1) + (1 if value else -1)
         self.n_full += delta
+        self.deleted.discard(idx)
 
     def __delitem__(self, idx: int) -> None:
         old_value = super().__getitem__(idx)
@@ -43,10 +37,11 @@ class BucketList(List[Bucket]):
         if old_value:
             self.n_full -= 1
 
-        super().__setitem__(idx, DELETED)
+        super().__setitem__(idx, None)
+        self.deleted.add(idx)
 
 
-class RobinHoodDict(Mapping):
+class RobinHoodDict(MutableMapping):
     buckets: BucketList
     mean_dist: int
     max_dist: int
@@ -82,13 +77,10 @@ class RobinHoodDict(Mapping):
             bucket = self.buckets[i]
             print(bucket)
 
-            if bucket is DELETED:
-                continue
-
-            elif bucket is EMPTY:
+            if bucket is EMPTY:
                 raise KeyError
 
-            if bucket.hash == h:
+            elif bucket.hash == h:
                 if self._compare_keys(bucket.key, key):
                     return bucket.value
 
@@ -100,10 +92,7 @@ class RobinHoodDict(Mapping):
         for i in self._get_smart_search_indexes(h):
             bucket = self.buckets[i]
 
-            if bucket is DELETED:
-                continue
-
-            elif bucket is EMPTY:
+            if bucket is EMPTY:
                 raise KeyError
 
             if bucket.hash == h and self._compare_keys(bucket.key, key):
@@ -148,4 +137,4 @@ class RobinHoodDict(Mapping):
                               range(self.mean_dist + h - 1, h-1, -1),
                               fillvalue=0)
 
-        return filter(lambda i, h=h: i >= h, chain(*indexes))
+        return (i for i in chain(*indexes) if i >= h and i not in self.buckets.deleted)
