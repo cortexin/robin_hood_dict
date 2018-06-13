@@ -66,7 +66,7 @@ class RobinHoodDict(MutableMapping):
         self._add_to_mean(distance)
         self.max_dist = max(self.max_dist, distance)
 
-        if isinstance(bucket, RobinValue):
+        if bucket:
             self.__setitem__(bucket.key, bucket.value)
 
     def __getitem__(self, key: Hashable) -> Any:
@@ -75,7 +75,6 @@ class RobinHoodDict(MutableMapping):
         print(self._get_smart_search_indexes(h))
         for i in self._get_smart_search_indexes(h):
             bucket = self.buckets[i]
-            print(bucket)
 
             if bucket is EMPTY:
                 raise KeyError
@@ -109,7 +108,7 @@ class RobinHoodDict(MutableMapping):
 
     def __iter__(self) -> Iterator[Hashable]:
         for bucket in self.buckets:
-            if isinstance(bucket, RobinValue):
+            if bucket:
                 yield bucket.key
 
     def _find_bucket(self, h: int) -> Tuple[int, Bucket]:
