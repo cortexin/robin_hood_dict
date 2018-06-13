@@ -3,7 +3,9 @@ from itertools import chain, zip_longest, repeat
 from typing import Any, Hashable, Union, NamedTuple, List, Tuple, Optional, Iterable, Iterator, TypeVar
 
 
-K = 2 / 3
+MAX_LOAD = 2 / 3
+MIN_LOAD = 1 / 2
+AVG_LOAD = (MAX_LOAD + MIN_LOAD) / 2
 
 
 class RobinValue(NamedTuple):
@@ -18,7 +20,7 @@ Bucket = Optional[RobinValue]
 class BucketList(List[Bucket]):
     def __init__(self, itable: Iterable, n_full: int = 0) -> None:
         self.n_full = n_full
-        self.deleted: set = set()
+        self.tombstones: set = set()
         super().__init__(itable)
 
     def __setitem__(self, idx, value):
@@ -27,7 +29,7 @@ class BucketList(List[Bucket]):
 
         delta = (-1 if old_value else 1) + (1 if value else -1)
         self.n_full += delta
-        self.deleted.discard(idx)
+        self.tombstones.discard(idx)
 
     def __delitem__(self, idx):
         old_value = super().__getitem__(idx)
@@ -36,7 +38,7 @@ class BucketList(List[Bucket]):
             self.n_full -= 1
 
         super().__setitem__(idx, None)
-        self.deleted.add(idx)
+        self.tombstones.add(idx)
 
 
 class RobinHoodDict(MutableMapping):
@@ -44,25 +46,30 @@ class RobinHoodDict(MutableMapping):
     mean_dist: int
     max_dist: int
 
-    def __init__(self, base: Optional[dict] = None,  **kwargs: dict) -> None:
-        n_buckets = max(int(len(kwargs) // K), 10)
+    def __init__(self, base: Optional[dict] = None,  **_kwargs: dict) -> None:
+        kwargs = base or _kwargs
+        n_buckets = max(int(len(kwargs) / AVG_LOAD), 10)
+        print(n_buckets, len(kwargs))
         self.buckets = BucketList(repeat(None, n_buckets))
         self.mean_dist = 1  # mean distance from the original bucket
         self.max_dist = 1
 
-        for k, v in (base or kwargs).items():
+        for k, v in kwargs.items():
             self.__setitem__(k, v)
 
     def __setitem__(self, key: Hashable, val: Any) -> None:
         h = self._compute_hash(key)
         idx, bucket = self._find_bucket(h)
-        print(f'{key}. {val} => {idx}...{bucket}')
+        print(f'{key} => {val} == {bucket} @ {idx}')
 
         self.buckets[idx] = RobinValue(h, key, val)
 
         self._update_statistics_add(idx, h)
         if bucket:
             self.__setitem__(bucket.key, bucket.value)
+
+        elif self.load_factor >= MAX_LOAD:
+            self._rehash()
 
     def __getitem__(self, key: Hashable) -> Any:
         h = self._compute_hash(key)
@@ -92,6 +99,9 @@ class RobinHoodDict(MutableMapping):
             if bucket.hash == h and self._compare_keys(bucket.key, key):
                 del self.buckets[idx]
                 self._update_statistics_remove(idx, h)
+
+                if self.load_factor <= MIN_LOAD / 2:
+                    self._rehash
                 break
         else:
             raise KeyError
@@ -136,14 +146,27 @@ class RobinHoodDict(MutableMapping):
                               fillvalue=0)
 
         for idx in indexes:
-            if idx >= h and idx not in self.buckets.deleted:
+            if idx >= h and idx not in self.buckets.tombstones:
                 yield idx
 
     def _get_max_dist(self):
         dist = 0
         for idx, bucket in enumerate(self.buckets):
             if bucket:
-                print(f'{bucket.hash} - {idx}')
                 dist = max(dist, idx - bucket.hash)
 
         return dist
+
+    def _rehash(self):
+        print('Called rehash.')
+        old_buckets = self.buckets
+
+        n_buckets = int(self.buckets.n_full / MIN_LOAD)
+        self.buckets = BucketList(repeat(None, n_buckets))
+
+        for _, key, value in filter(None, old_buckets):
+            self.__setitem__(key, value)
+
+    @property
+    def load_factor(self) -> int:
+        return self.buckets.n_full / len(self.buckets)
