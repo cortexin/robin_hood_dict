@@ -1,6 +1,5 @@
 from collections.abc import MutableMapping
 from itertools import chain, zip_longest, repeat
-
 from typing import Any, Hashable, Union, NamedTuple, List, Tuple, Optional, Iterable, Iterator, TypeVar
 
 
@@ -62,10 +61,7 @@ class RobinHoodDict(MutableMapping):
 
         self.buckets[idx] = RobinValue(h, key, val)
 
-        distance = idx - h
-        self._add_to_mean(distance)
-        self.max_dist = max(self.max_dist, distance)
-
+        self._update_statistics_add(idx, h)
         if bucket:
             self.__setitem__(bucket.key, bucket.value)
 
@@ -88,17 +84,15 @@ class RobinHoodDict(MutableMapping):
     def __delitem__(self, key: Hashable) -> None:
         h = self._compute_hash(key)
 
-        for i in self._get_smart_search_indexes(h):
-            bucket = self.buckets[i]
+        for idx in self._get_smart_search_indexes(h):
+            bucket = self.buckets[idx]
 
             if bucket is EMPTY:
                 raise KeyError
 
             if bucket.hash == h and self._compare_keys(bucket.key, key):
-                del self.buckets[i]
-                distance = i - h
-                self._remove_from_mean(distance)
-                # TODO: decrease max_dist
+                del self.buckets[idx]
+                self._update_statistics_remove(idx, h)
                 break
         else:
             raise KeyError
@@ -107,9 +101,8 @@ class RobinHoodDict(MutableMapping):
         return self.buckets.n_full
 
     def __iter__(self) -> Iterator[Hashable]:
-        for bucket in self.buckets:
-            if bucket:
-                yield bucket.key
+        for bucket in filter(None, self.buckets):
+            yield bucket.key
 
     def _find_bucket(self, h: int) -> Tuple[int, Bucket]:
         for i, bucket in enumerate(self.buckets[h:]):
@@ -122,13 +115,21 @@ class RobinHoodDict(MutableMapping):
     def _compare_keys(self, key1, key2) -> bool:
         return (key1 is key2) or (key1 == key2)
 
-    def _remove_from_mean(self, distance: int) -> None:
+    def _update_statistics_add(self, idx: int, orig_idx: int) -> None:
+        distance = idx - orig_idx
+
+        self.mean_dist = int(
+            (self.mean_dist + distance / self.buckets.n_full) / 2)
+        self.max_dist = max(self.max_dist, distance)
+
+    def _update_statistics_remove(self, idx: int, orig_idx: int) -> None:
+        distance = idx - orig_idx
+
         self.mean_dist = int((self.mean_dist * self.buckets.n_full -
                               distance) // (self.buckets.n_full - 1))
 
-    def _add_to_mean(self, distance: int) -> None:
-        self.mean_dist = int(
-            (self.mean_dist + distance / self.buckets.n_full) / 2)
+        if self.max_dist == distance:
+            self.max_dist = self._get_max_dist()
 
     def _get_smart_search_indexes(self, h: int) -> Iterable:
         # could be an iterator
@@ -136,4 +137,16 @@ class RobinHoodDict(MutableMapping):
                               range(self.mean_dist + h - 1, h-1, -1),
                               fillvalue=0)
 
-        return (i for i in chain(*indexes) if i >= h and i not in self.buckets.deleted)
+        for idx in indexes:
+            if idx >= h and idx not in self.buckets.deleted:
+                yield idx
+        # return (i for i in chain(*indexes) if i >= h and i not in self.buckets.deleted)
+
+    def _get_max_dist(self):
+        dist = 0
+        for idx, bucket in enumerate(self.buckets):
+            if bucket:
+                print(f'{bucket.hash} - {idx}')
+                dist = max(dist, idx - bucket.hash)
+
+        return dist
