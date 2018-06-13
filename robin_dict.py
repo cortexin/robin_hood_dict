@@ -13,16 +13,15 @@ class RobinValue(NamedTuple):
 
 
 Bucket = Optional[RobinValue]
-EMPTY = None
 
 
 class BucketList(List[Bucket]):
     def __init__(self, itable: Iterable, n_full: int = 0) -> None:
         self.n_full = n_full
-        self.deleted = set()
+        self.deleted: set = set()
         super().__init__(itable)
 
-    def __setitem__(self, idx: int, value: Any) -> None:
+    def __setitem__(self, idx, value):
         old_value = super().__getitem__(idx)
         super().__setitem__(idx, value)
 
@@ -30,7 +29,7 @@ class BucketList(List[Bucket]):
         self.n_full += delta
         self.deleted.discard(idx)
 
-    def __delitem__(self, idx: int) -> None:
+    def __delitem__(self, idx):
         old_value = super().__getitem__(idx)
 
         if old_value:
@@ -47,7 +46,7 @@ class RobinHoodDict(MutableMapping):
 
     def __init__(self, base: Optional[dict] = None,  **kwargs: dict) -> None:
         n_buckets = max(int(len(kwargs) // K), 10)
-        self.buckets = BucketList(repeat(EMPTY, n_buckets))
+        self.buckets = BucketList(repeat(None, n_buckets))
         self.mean_dist = 1  # mean distance from the original bucket
         self.max_dist = 1
 
@@ -72,7 +71,7 @@ class RobinHoodDict(MutableMapping):
         for i in self._get_smart_search_indexes(h):
             bucket = self.buckets[i]
 
-            if bucket is EMPTY:
+            if bucket is None:
                 raise KeyError
 
             elif bucket.hash == h:
@@ -87,7 +86,7 @@ class RobinHoodDict(MutableMapping):
         for idx in self._get_smart_search_indexes(h):
             bucket = self.buckets[idx]
 
-            if bucket is EMPTY:
+            if bucket is None:
                 raise KeyError
 
             if bucket.hash == h and self._compare_keys(bucket.key, key):
@@ -131,8 +130,7 @@ class RobinHoodDict(MutableMapping):
         if self.max_dist == distance:
             self.max_dist = self._get_max_dist()
 
-    def _get_smart_search_indexes(self, h: int) -> Iterable:
-        # could be an iterator
+    def _get_smart_search_indexes(self, h: int) -> Iterator[int]:
         indexes = zip_longest(range(self.mean_dist + h, self.max_dist + h + 1),
                               range(self.mean_dist + h - 1, h-1, -1),
                               fillvalue=0)
@@ -140,7 +138,6 @@ class RobinHoodDict(MutableMapping):
         for idx in indexes:
             if idx >= h and idx not in self.buckets.deleted:
                 yield idx
-        # return (i for i in chain(*indexes) if i >= h and i not in self.buckets.deleted)
 
     def _get_max_dist(self):
         dist = 0
